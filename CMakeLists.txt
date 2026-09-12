@@ -6,6 +6,31 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
+include(CTest)
+
+option(XPBD_CLOTH_BUILD_APP "Build the Vulkan GUI simulator" ON)
+
+add_library(XPBDClothNumericReference STATIC
+  src/numeric/reference_math.cpp
+)
+set_target_properties(XPBDClothNumericReference PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+target_include_directories(XPBDClothNumericReference PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/numeric
+)
+
+add_executable(XPBDClothNumericProbe tools/numeric_probe.cpp)
+set_target_properties(XPBDClothNumericProbe PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+target_link_libraries(XPBDClothNumericProbe PRIVATE XPBDClothNumericReference)
+
+if(BUILD_TESTING)
+  add_executable(XPBDClothNumericTests tests/numeric_reference_tests.cpp)
+  set_target_properties(XPBDClothNumericTests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+  target_link_libraries(XPBDClothNumericTests PRIVATE XPBDClothNumericReference)
+  add_test(NAME XPBDClothNumericTests COMMAND XPBDClothNumericTests)
+endif()
+
+if(XPBD_CLOTH_BUILD_APP)
+
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(KTX CONFIG REQUIRED)
@@ -204,3 +229,4 @@ set(SIMULATION_SHADERS
 compile_glsl_shaders(simulation_shaders_target SOURCES ${SIMULATION_SHADERS})
 
 add_dependencies(XPBDCloth object_render_shaders_target simulation_shaders_target)
+endif()
