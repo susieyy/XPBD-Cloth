@@ -171,9 +171,9 @@ std::vector<T> download(VkDevice device, Buffer& buffer, size_t count) {
   return result;
 }
 
-std::vector<uint32_t> read_spirv() {
-  std::ifstream input(XPBD_AREA_SHADER_PATH, std::ios::binary | std::ios::ate);
-  if (!input) throw std::runtime_error("cannot open solve_area SPIR-V");
+std::vector<uint32_t> read_spirv(const char* path) {
+  std::ifstream input(path, std::ios::binary | std::ios::ate);
+  if (!input) throw std::runtime_error(std::string("cannot open SPIR-V: ") + path);
   const auto bytes = input.tellg();
   if (bytes <= 0 || bytes % 4 != 0) throw std::runtime_error("invalid SPIR-V size");
   std::vector<uint32_t> code(static_cast<size_t>(bytes) / 4);
@@ -182,11 +182,11 @@ std::vector<uint32_t> read_spirv() {
   return code;
 }
 
-void emit(const char* device, const char* metric, double value) {
+void emit(const char* device, const char* case_name, const char* metric, double value) {
   std::cout << "{\"schemaVersion\":1,\"sourceRevision\":\"" << kRevision
             << "\",\"implementation\":\"donor-vulkan-gpu\",\"gpuExecuted\":true"
-            << ",\"device\":\"" << device
-            << "\",\"case\":\"area-rigid-rotation-90\",\"metric\":\""
+            << ",\"device\":\"" << device << "\",\"case\":\"" << case_name
+            << "\",\"metric\":\""
             << metric << "\",\"value\":" << std::setprecision(9) << value
             << "}\n";
 }
@@ -200,7 +200,9 @@ int main() {
   VkDescriptorSetLayout storage_layout = VK_NULL_HANDLE;
   VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
   VkShaderModule shader = VK_NULL_HANDLE;
+  VkShaderModule wind_shader = VK_NULL_HANDLE;
   VkPipeline pipeline = VK_NULL_HANDLE;
+  VkPipeline wind_pipeline = VK_NULL_HANDLE;
   VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
   VkCommandPool command_pool = VK_NULL_HANDLE;
 
@@ -303,22 +305,28 @@ int main() {
                                  &pipeline_layout),
           "vkCreatePipelineLayout");
 
-    const auto spirv = read_spirv();
-    VkShaderModuleCreateInfo shader_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    shader_info.codeSize = spirv.size() * sizeof(uint32_t);
-    shader_info.pCode = spirv.data();
-    check(vkCreateShaderModule(device, &shader_info, nullptr, &shader),
-          "vkCreateShaderModule");
-    VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stage.module = shader;
-    stage.pName = "main";
-    VkComputePipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    pipeline_info.stage = stage;
-    pipeline_info.layout = pipeline_layout;
-    check(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr,
-                                   &pipeline),
-          "vkCreateComputePipelines");
+    auto make_pipeline = [&](const char* path, VkShaderModule* module, VkPipeline* output) {
+      const auto spirv = read_spirv(path);
+      VkShaderModuleCreateInfo shader_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+      shader_info.codeSize = spirv.size() * sizeof(uint32_t);
+      shader_info.pCode = spirv.data();
+      check(vkCreateShaderModule(device, &shader_info, nullptr, module),
+            "vkCreateShaderModule");
+      VkPipelineShaderStageCreateInfo stage{
+          VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+      stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+      stage.module = *module;
+      stage.pName = "main";
+      VkComputePipelineCreateInfo pipeline_info{
+          VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+      pipeline_info.stage = stage;
+      pipeline_info.layout = pipeline_layout;
+      check(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr,
+                                     output),
+            "vkCreateComputePipelines");
+    };
+    make_pipeline(XPBD_AREA_SHADER_PATH, &shader, &pipeline);
+    make_pipeline(XPBD_WIND_SHADER_PATH, &wind_shader, &wind_pipeline);
 
     Buffer sim = make_buffer(physical, device, sizeof(SimParams),
                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
@@ -419,18 +427,53 @@ int main() {
     const auto delta_x = download<float>(device, buffers[4], 3);
     const auto counts = download<uint32_t>(device, buffers[7], 3);
     const auto areas = download<Area>(device, buffers[12], 1);
-    emit(properties.deviceName, "lambda", areas[0].lambda);
-    emit(properties.deviceName, "delta-x-0", delta_x[0]);
-    emit(properties.deviceName, "delta-x-1", delta_x[1]);
-    emit(properties.deviceName, "delta-count-0", counts[0]);
+    emit(properties.deviceName, "area-rigid-rotation-90", "lambda", areas[0].lambda);
+    emit(properties.deviceName, "area-rigid-rotation-90", "delta-x-0", delta_x[0]);
+    emit(properties.deviceName, "area-rigid-rotation-90", "delta-x-1", delta_x[1]);
+    emit(properties.deviceName, "area-rigid-rotation-90", "delta-count-0", counts[0]);
+
+    sim_params.wind_dir[0] = 0;
+    sim_params.wind_dir[1] = 0;
+    sim_params.wind_dir[2] = 1;
+    sim_params.wind_enable = 1;
+    sim_params.wind_force = 1;
+    sim_params.air_density = 1.2f;
+    sim_params.drag_coefficient = 4;
+    sim_params.lift_coefficient = 5;
+    upload(device, sim, &sim_params, 1);
+    const std::array<Vec4, 3> wind_positions{{{0, 0, 0, 1}, {1, 0, 0, 1},
+                                             {0, 1, 0, 1}}};
+    const std::array<Vec4, 3> zero_vectors{};
+    const std::array<uint32_t, 3> indices{0, 1, 2};
+    upload(device, buffers[0], wind_positions.data(), wind_positions.size());
+    upload(device, buffers[2], zero_vectors.data(), zero_vectors.size());
+    upload(device, buffers[19], indices.data(), indices.size());
+    upload(device, buffers[26], zero_vectors.data(), zero_vectors.size());
+    check(vkResetCommandPool(device, command_pool, 0), "vkResetCommandPool");
+    check(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer(wind)");
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, wind_pipeline);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout,
+                            0, sets.size(), sets.data(), 1, &dynamic_offset);
+    vkCmdPushConstants(command, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                       sizeof(push), &push);
+    vkCmdDispatch(command, 1, 1, 1);
+    check(vkEndCommandBuffer(command), "vkEndCommandBuffer(wind)");
+    check(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit(wind)");
+    check(vkQueueWaitIdle(queue), "vkQueueWaitIdle(wind)");
+    const auto delta_velocity = download<Vec4>(device, buffers[26], 3);
+    emit(properties.deviceName, "wind-single-triangle", "particle-0-delta-v-z",
+         delta_velocity[0].z);
 
     const bool valid = std::abs(areas[0].lambda - 1.0f) < 1e-6f &&
                        std::abs(delta_x[0] - 0.5f) < 1e-6f &&
-                       std::abs(delta_x[1] + 0.5f) < 1e-6f && counts[0] == 1;
+                       std::abs(delta_x[1] + 0.5f) < 1e-6f && counts[0] == 1 &&
+                       std::abs(delta_velocity[0].z - 1.0f / 1500.0f) < 1e-6f;
     vkDeviceWaitIdle(device);
     vkDestroyCommandPool(device, command_pool, nullptr);
     vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
+    vkDestroyPipeline(device, wind_pipeline, nullptr);
     vkDestroyPipeline(device, pipeline, nullptr);
+    vkDestroyShaderModule(device, wind_shader, nullptr);
     vkDestroyShaderModule(device, shader, nullptr);
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     vkDestroyDescriptorSetLayout(device, storage_layout, nullptr);
@@ -445,7 +488,9 @@ int main() {
     if (device) vkDeviceWaitIdle(device);
     if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
     if (descriptor_pool) vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
+    if (wind_pipeline) vkDestroyPipeline(device, wind_pipeline, nullptr);
     if (pipeline) vkDestroyPipeline(device, pipeline, nullptr);
+    if (wind_shader) vkDestroyShaderModule(device, wind_shader, nullptr);
     if (shader) vkDestroyShaderModule(device, shader, nullptr);
     if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     if (storage_layout) vkDestroyDescriptorSetLayout(device, storage_layout, nullptr);

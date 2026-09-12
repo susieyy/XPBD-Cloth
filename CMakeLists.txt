@@ -38,6 +38,8 @@ if(XPBD_CLOTH_BUILD_VULKAN_PROBE)
 
   set(VULKAN_AREA_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/simulation/solve_area.comp)
   set(VULKAN_AREA_SPV ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv/solve_area.comp.spv)
+  set(VULKAN_WIND_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/simulation/wind.comp)
+  set(VULKAN_WIND_SPV ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv/wind.comp.spv)
   add_custom_command(
     OUTPUT ${VULKAN_AREA_SPV}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv
@@ -46,12 +48,22 @@ if(XPBD_CLOTH_BUILD_VULKAN_PROBE)
     DEPENDS ${VULKAN_AREA_SHADER} shaders/common/simulation_common.glsl
     VERBATIM
   )
+  add_custom_command(
+    OUTPUT ${VULKAN_WIND_SPV}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv
+    COMMAND ${XPBD_GLSLC} --target-env=vulkan1.3 -O -g
+            ${VULKAN_WIND_SHADER} -o ${VULKAN_WIND_SPV}
+    DEPENDS ${VULKAN_WIND_SHADER} shaders/common/simulation_common.glsl
+    VERBATIM
+  )
 
-  add_executable(XPBDClothVulkanAreaProbe tools/vulkan_area_probe.cpp ${VULKAN_AREA_SPV})
+  add_executable(XPBDClothVulkanAreaProbe
+    tools/vulkan_area_probe.cpp ${VULKAN_AREA_SPV} ${VULKAN_WIND_SPV})
   set_target_properties(XPBDClothVulkanAreaProbe PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   target_link_libraries(XPBDClothVulkanAreaProbe PRIVATE Vulkan::Vulkan)
   target_compile_definitions(XPBDClothVulkanAreaProbe PRIVATE
     XPBD_AREA_SHADER_PATH="${VULKAN_AREA_SPV}"
+    XPBD_WIND_SHADER_PATH="${VULKAN_WIND_SPV}"
   )
   if(BUILD_TESTING)
     add_test(NAME XPBDClothVulkanAreaProbe COMMAND XPBDClothVulkanAreaProbe)
