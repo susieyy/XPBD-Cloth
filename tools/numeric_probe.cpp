@@ -25,6 +25,18 @@ int main() {
   const Vec3 p2{0, 1, 0};
   emit("area-rigid-rotation-90", "residual",
        donor_area_residual(p0, p1, p2, 0.5, {0, 0, 1}));
+  const auto area_gradients = donor_area_gradients(p0, p1, p2, {0, 0, 1});
+  const double area_residual = donor_area_residual(p0, p1, p2, 0.5, {0, 0, 1});
+  const double area_denominator = dot(area_gradients[0], area_gradients[0]) +
+                                  dot(area_gradients[1], area_gradients[1]) +
+                                  dot(area_gradients[2], area_gradients[2]);
+  const double area_delta_lambda = -area_residual / area_denominator;
+  emit("area-rigid-rotation-90", "lambda", area_delta_lambda);
+  emit("area-rigid-rotation-90", "delta-x-0",
+       area_delta_lambda * area_gradients[0].x);
+  emit("area-rigid-rotation-90", "delta-x-1",
+       area_delta_lambda * area_gradients[1].x);
+  emit("area-rigid-rotation-90", "delta-count-0", 1);
 
   const Vec3 b0{0, 0, 0};
   const Vec3 b1{1, 0, 0};

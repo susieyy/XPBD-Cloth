@@ -9,6 +9,9 @@ set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 include(CTest)
 
 option(XPBD_CLOTH_BUILD_APP "Build the Vulkan GUI simulator" ON)
+option(XPBD_CLOTH_BUILD_VULKAN_PROBE "Build the headless Vulkan GPU probe" OFF)
+set(XPBD_CLOTH_VULKAN_DRIVER_FILES "" CACHE FILEPATH
+    "Optional VK_DRIVER_FILES value for the Vulkan probe CTest")
 
 add_library(XPBDClothNumericReference STATIC
   src/numeric/reference_math.cpp
@@ -27,6 +30,36 @@ if(BUILD_TESTING)
   set_target_properties(XPBDClothNumericTests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
   target_link_libraries(XPBDClothNumericTests PRIVATE XPBDClothNumericReference)
   add_test(NAME XPBDClothNumericTests COMMAND XPBDClothNumericTests)
+endif()
+
+if(XPBD_CLOTH_BUILD_VULKAN_PROBE)
+  find_package(Vulkan REQUIRED)
+  find_program(XPBD_GLSLC NAMES glslc REQUIRED)
+
+  set(VULKAN_AREA_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/simulation/solve_area.comp)
+  set(VULKAN_AREA_SPV ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv/solve_area.comp.spv)
+  add_custom_command(
+    OUTPUT ${VULKAN_AREA_SPV}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv
+    COMMAND ${XPBD_GLSLC} --target-env=vulkan1.3 -O -g
+            ${VULKAN_AREA_SHADER} -o ${VULKAN_AREA_SPV}
+    DEPENDS ${VULKAN_AREA_SHADER} shaders/common/simulation_common.glsl
+    VERBATIM
+  )
+
+  add_executable(XPBDClothVulkanAreaProbe tools/vulkan_area_probe.cpp ${VULKAN_AREA_SPV})
+  set_target_properties(XPBDClothVulkanAreaProbe PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+  target_link_libraries(XPBDClothVulkanAreaProbe PRIVATE Vulkan::Vulkan)
+  target_compile_definitions(XPBDClothVulkanAreaProbe PRIVATE
+    XPBD_AREA_SHADER_PATH="${VULKAN_AREA_SPV}"
+  )
+  if(BUILD_TESTING)
+    add_test(NAME XPBDClothVulkanAreaProbe COMMAND XPBDClothVulkanAreaProbe)
+    if(XPBD_CLOTH_VULKAN_DRIVER_FILES)
+      set_tests_properties(XPBDClothVulkanAreaProbe PROPERTIES
+        ENVIRONMENT "VK_DRIVER_FILES=${XPBD_CLOTH_VULKAN_DRIVER_FILES}")
+    endif()
+  endif()
 endif()
 
 if(XPBD_CLOTH_BUILD_APP)

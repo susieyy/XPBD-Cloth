@@ -19,6 +19,9 @@
 mono_crash.*
 
 # Build results
+.auto-exec/
+.agent/
+build-vulkan-probe/
 build-numeric/
 [Dd]ebug/
 [Dd]ebugPublic/
