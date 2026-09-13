@@ -6,6 +6,104 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
+include(CTest)
+
+option(XPBD_CLOTH_BUILD_APP "Build the Vulkan GUI simulator" ON)
+option(XPBD_CLOTH_BUILD_VULKAN_PROBE "Build the headless Vulkan GPU probe" OFF)
+set(XPBD_CLOTH_VULKAN_DRIVER_FILES "" CACHE FILEPATH
+    "Optional VK_DRIVER_FILES value for the Vulkan probe CTest")
+
+add_library(XPBDClothNumericReference STATIC
+  src/numeric/reference_math.cpp
+)
+set_target_properties(XPBDClothNumericReference PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+target_include_directories(XPBDClothNumericReference PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/numeric
+)
+
+add_executable(XPBDClothNumericProbe tools/numeric_probe.cpp)
+set_target_properties(XPBDClothNumericProbe PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+target_link_libraries(XPBDClothNumericProbe PRIVATE XPBDClothNumericReference)
+
+if(BUILD_TESTING)
+  add_executable(XPBDClothNumericTests tests/numeric_reference_tests.cpp)
+  set_target_properties(XPBDClothNumericTests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+  target_link_libraries(XPBDClothNumericTests PRIVATE XPBDClothNumericReference)
+  add_test(NAME XPBDClothNumericTests COMMAND XPBDClothNumericTests)
+endif()
+
+if(XPBD_CLOTH_BUILD_VULKAN_PROBE)
+  find_package(Vulkan REQUIRED)
+  find_program(XPBD_GLSLC NAMES glslc REQUIRED)
+
+  set(VULKAN_AREA_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/simulation/solve_area.comp)
+  set(VULKAN_AREA_SPV ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv/solve_area.comp.spv)
+  set(VULKAN_WIND_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/simulation/wind.comp)
+  set(VULKAN_WIND_SPV ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv/wind.comp.spv)
+  set(VULKAN_STAGE_NAMES
+    integrate solve_stretch solve_shear solve_bend apply_deltas solve_lra collide_sdf
+    update_velocity tri_normal vertex_normal)
+  add_custom_command(
+    OUTPUT ${VULKAN_AREA_SPV}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv
+    COMMAND ${XPBD_GLSLC} --target-env=vulkan1.3 -O -g
+            ${VULKAN_AREA_SHADER} -o ${VULKAN_AREA_SPV}
+    DEPENDS ${VULKAN_AREA_SHADER} shaders/common/simulation_common.glsl
+    VERBATIM
+  )
+
+  set(VULKAN_STAGE_SPV)
+  foreach(STAGE_NAME IN LISTS VULKAN_STAGE_NAMES)
+    set(STAGE_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/simulation/${STAGE_NAME}.comp)
+    set(STAGE_SPV ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv/${STAGE_NAME}.comp.spv)
+    add_custom_command(
+      OUTPUT ${STAGE_SPV}
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv
+      COMMAND ${XPBD_GLSLC} --target-env=vulkan1.3 -O -g
+              ${STAGE_SHADER} -o ${STAGE_SPV}
+      DEPENDS ${STAGE_SHADER} shaders/common/simulation_common.glsl
+      VERBATIM
+    )
+    list(APPEND VULKAN_STAGE_SPV ${STAGE_SPV})
+  endforeach()
+  add_custom_command(
+    OUTPUT ${VULKAN_WIND_SPV}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/shaders/spv
+    COMMAND ${XPBD_GLSLC} --target-env=vulkan1.3 -O -g
+            ${VULKAN_WIND_SHADER} -o ${VULKAN_WIND_SPV}
+    DEPENDS ${VULKAN_WIND_SHADER} shaders/common/simulation_common.glsl
+    VERBATIM
+  )
+
+  add_executable(XPBDClothVulkanAreaProbe
+    tools/vulkan_area_probe.cpp ${VULKAN_AREA_SPV} ${VULKAN_WIND_SPV})
+  set_target_properties(XPBDClothVulkanAreaProbe PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+  target_link_libraries(XPBDClothVulkanAreaProbe PRIVATE Vulkan::Vulkan)
+  target_compile_definitions(XPBDClothVulkanAreaProbe PRIVATE
+    XPBD_AREA_SHADER_PATH="${VULKAN_AREA_SPV}"
+    XPBD_WIND_SHADER_PATH="${VULKAN_WIND_SPV}"
+  )
+  add_executable(XPBDClothVulkanStageProbe
+    tools/vulkan_stage_probe.cpp ${VULKAN_STAGE_SPV})
+  set_target_properties(XPBDClothVulkanStageProbe PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+  target_link_libraries(XPBDClothVulkanStageProbe PRIVATE Vulkan::Vulkan)
+  foreach(STAGE_NAME IN LISTS VULKAN_STAGE_NAMES)
+    string(TOUPPER ${STAGE_NAME} STAGE_DEFINE)
+    target_compile_definitions(XPBDClothVulkanStageProbe PRIVATE
+      XPBD_${STAGE_DEFINE}_SHADER_PATH="${CMAKE_CURRENT_BINARY_DIR}/shaders/spv/${STAGE_NAME}.comp.spv")
+  endforeach()
+  if(BUILD_TESTING)
+    add_test(NAME XPBDClothVulkanAreaProbe COMMAND XPBDClothVulkanAreaProbe)
+    add_test(NAME XPBDClothVulkanStageProbe COMMAND XPBDClothVulkanStageProbe)
+    if(XPBD_CLOTH_VULKAN_DRIVER_FILES)
+      set_tests_properties(XPBDClothVulkanAreaProbe XPBDClothVulkanStageProbe PROPERTIES
+        ENVIRONMENT "VK_DRIVER_FILES=${XPBD_CLOTH_VULKAN_DRIVER_FILES}")
+    endif()
+  endif()
+endif()
+
+if(XPBD_CLOTH_BUILD_APP)
+
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(KTX CONFIG REQUIRED)
@@ -204,3 +302,4 @@ set(SIMULATION_SHADERS
 compile_glsl_shaders(simulation_shaders_target SOURCES ${SIMULATION_SHADERS})
 
 add_dependencies(XPBDCloth object_render_shaders_target simulation_shaders_target)
+endif()

@@ -27,6 +27,37 @@ Analytic SDF Collision 및 Vulkan Rendering Pipeline을 구현했습니다.
 > GPU-accelerated cloth simulation based on Extended Position Based Dynamics (XPBD).
 > Real-time cloth simulation implemented with Vulkan Compute Shaders.
 
+## Headless numerical audit
+
+This fork includes a renderer-independent executable transcription of selected donor shader
+expressions. It makes formula differences observable on machines where the complete Vulkan GUI is
+not available. It is deliberately labelled `donor-cpu-transcription`: passing these tests does not
+claim that the Vulkan dispatch/runtime path was executed.
+
+```sh
+cmake -S . -B build-numeric -DXPBD_CLOTH_BUILD_APP=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build-numeric --config Release
+ctest --test-dir build-numeric -C Release --output-on-failure
+./build-numeric/XPBDClothNumericProbe
+```
+
+The probe emits stable JSONL records keyed by `case` and `metric`. The fixed source revision is
+included in every record so results from a later upstream revision cannot be compared silently.
+
+To exercise the unchanged shaders on an actual Vulkan device without the renderer, enable the
+Vulkan probes. `XPBDClothVulkanAreaProbe` covers Area and Wind;
+`XPBDClothVulkanStageProbe` covers Integrate, Stretch, Shear, Bend, LRA, Collide,
+UpdateVelocity, and normal generation. Every stage record includes `gpuExecuted=true`, the physical
+device name, fixture case, stage, metric, and value.
+
+```sh
+cmake -S . -B build-vulkan-probe -DXPBD_CLOTH_BUILD_APP=OFF \
+  -DXPBD_CLOTH_BUILD_VULKAN_PROBE=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-vulkan-probe --config Release
+ctest --test-dir build-vulkan-probe -C Release --output-on-failure
+./build-vulkan-probe/XPBDClothVulkanStageProbe
+```
+
 ### Demo Video
 [![Demo Video](./docs/media/thumbnail.png)](https://www.youtube.com/watch?v=nu1VZo1UNBs)
 
@@ -483,4 +514,3 @@ The current implementation includes a real-time GPU XPBD cloth pipeline, but it 
 * The project does not provide a formal convergence or error analysis of the complete solver.
 
 These limitations are areas I would investigate more systematically in a future implementation.
-
