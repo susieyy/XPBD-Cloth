@@ -406,6 +406,15 @@ int main() {
       vkCmdPushConstants(command, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                          sizeof(push), &push);
       vkCmdDispatch(command, 1, 1, 1);
+      VkMemoryBarrier publish{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+      publish.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+      publish.dstAccessMask = VK_ACCESS_SHADER_READ_BIT |
+                              VK_ACCESS_SHADER_WRITE_BIT |
+                              VK_ACCESS_HOST_READ_BIT;
+      vkCmdPipelineBarrier(
+          command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+          0, 1, &publish, 0, nullptr, 0, nullptr);
       check(vkEndCommandBuffer(command), "vkEndCommandBuffer");
       VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
       submit.commandBufferCount = 1;
@@ -489,10 +498,34 @@ int main() {
     const auto stretch_velocity = download<Vec4>(device, buffers[2], 3);
     emit(properties.deviceName, "stretch-single-free-particle", "UpdateVelocity",
          "velocity-1-x", stretch_velocity[1].x);
+
+    // Unequal-area, non-coplanar faces distinguish area-weighted normal accumulation.
+    reset();
+    params = {};
+    params.dt = 0.1f;
+    params.max_speed = 1000;
+    params.num_particles = 5;
+    params.num_tries = 2;
+    upload(device, sim, &params, 1);
+    const std::array<Vec4, 5> normal_positions{{
+        {0, 10, 0, 1}, {2, 10, 0, 1}, {0, 11, 0, 1},
+        {0, 11, 0, 1}, {0, 10, 1, 1}}};
+    const std::array<uint32_t, 6> normal_indices{0, 1, 2, 0, 3, 4};
+    const std::array<uint32_t, 6> normal_offsets{0, 2, 3, 4, 5, 6};
+    const std::array<uint32_t, 6> normal_incidents{0, 1, 0, 0, 1, 1};
+    upload(device, buffers[0], normal_positions);
+    upload(device, buffers[1], normal_positions);
+    upload(device, buffers[19], normal_indices);
+    upload(device, buffers[22], normal_offsets);
+    upload(device, buffers[23], normal_incidents);
+    push = {};
+    push.count = 5;
     dispatch(Stage::TriNormal, push);
     dispatch(Stage::VertexNormal, push);
-    const auto normals = download<Vec4>(device, buffers[20], 3);
-    emit(properties.deviceName, "stretch-single-free-particle", "ComputeNormals",
+    const auto normals = download<Vec4>(device, buffers[20], 5);
+    emit(properties.deviceName, "normals-area-weighted", "ComputeNormals",
+         "normal-0-x", normals[0].x);
+    emit(properties.deviceName, "normals-area-weighted", "ComputeNormals",
          "normal-0-z", normals[0].z);
 
     // Shear plus apply-deltas, with one free particle and deterministic accumulation.
